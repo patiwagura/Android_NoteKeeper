@@ -25,6 +25,10 @@ public class NoteActivity extends AppCompatActivity {
     private EditText mTextNoteTitle;
     private EditText mTextNoteText;
     private int mNotePosition;
+    private boolean mIsCancelling;
+    private String mOriginalNoteCourseId;
+    private String mOriginalNoteTitle;
+    private String mOriginalNoteText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -46,6 +50,7 @@ public class NoteActivity extends AppCompatActivity {
 
         //Method to get intent that started this activity & the intent-extras.
         readDisplayStateValues();
+        saveOriginalNoteValues();
 
         //populate and display the note user selected.
         mTextNoteTitle = findViewById(R.id.text_note_title);
@@ -54,6 +59,20 @@ public class NoteActivity extends AppCompatActivity {
         // We don't display a new-Note. It has no-content to display.
         if (!mIsNewNote)
             displayNote(mSpinnerCourses, mTextNoteTitle, mTextNoteText);
+
+    }
+
+    private void saveOriginalNoteValues() {
+        //method to save original Note values, so that we can revert back to Original values if need be.
+        // We have nothing to save for a newNote.
+        if (mIsNewNote)
+            return;
+
+        //Save all original Note values. CourseId is unique to all courses.
+        //CourseId of the original Note.
+        mOriginalNoteCourseId = mNote.getCourse().getCourseId();
+        mOriginalNoteTitle = mNote.getTitle();
+        mOriginalNoteText = mNote.getText();
 
     }
 
@@ -124,6 +143,11 @@ public class NoteActivity extends AppCompatActivity {
         if (id == R.id.action_send_mail) {
             sendEmail();
             return true;
+        } else if (id == R.id.action_cancel) {
+            // We no-longer wish to proceed with creating the new-Note. Don't save any changes.
+            mIsCancelling = true;
+            finish();  //destroy this activity. onPause() will be called as we destroy activity.
+            return true;
         }
 
         return super.onOptionsItemSelected(item);
@@ -132,7 +156,28 @@ public class NoteActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        saveNote();  //method to save changes made to our note.
+
+        if (mIsCancelling) {
+            if (mIsNewNote) {
+                // we were creating a new Note but decided to delete it. Delete Note from backing store.
+                DataManager.getInstance().removeNote(mNotePosition);
+            } else {
+                // We have decided to discard the new changes, Restore the original state of the existing Note.
+                storePreviousNoteValues();
+            }
+
+        } else {
+            // Save changes made to Note to the backing store.
+            saveNote();
+        }
+    }
+
+    private void storePreviousNoteValues() {
+        //Restore the original note values. Discard any new changes made to Note.
+        CourseInfo course = DataManager.getInstance().getCourse(mOriginalNoteCourseId);
+        mNote.setCourse(course);
+        mNote.setTitle(mOriginalNoteTitle);
+        mNote.setText(mOriginalNoteText);
     }
 
     /**
