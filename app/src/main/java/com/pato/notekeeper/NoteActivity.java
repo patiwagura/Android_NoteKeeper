@@ -2,6 +2,8 @@ package com.pato.notekeeper;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.provider.ContactsContract;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.ArrayAdapter;
@@ -10,6 +12,7 @@ import android.widget.Spinner;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
+import androidx.lifecycle.ViewModelProvider;
 
 import java.util.List;
 
@@ -19,6 +22,9 @@ public class NoteActivity extends AppCompatActivity {
     //public static final String NOTE_INFO = "com.pato.notekeeper.NOTE_INFO";  //package-qualify a constant-value to make it unique.
     public static final String NOTE_POSITION = "com.pato.notekeeper.NOTE_POSITION";  //package-qualify a constant-value to make it unique.
     public static final int POSITION_NOT_SET = -1;
+
+    //Common practice is to write debug messages for Activity LifeCycle methods. so that we can tell what is happening.
+    private final String TAG = getClass().getSimpleName();
     private NoteInfo mNote;
     private boolean mIsNewNote;
     private Spinner mSpinnerCourses;
@@ -26,9 +32,15 @@ public class NoteActivity extends AppCompatActivity {
     private EditText mTextNoteText;
     private int mNotePosition;
     private boolean mIsCancelling;
-    private String mOriginalNoteCourseId;
-    private String mOriginalNoteTitle;
-    private String mOriginalNoteText;
+
+    // ViewModel is used to save activity instance state.
+    // When Activity is destroyed due to Device configuration change (Portrait to Landscape) => ViewModels are destroyed together with Activity.
+    private NoteActivityViewModel mViewModel;
+
+    //Fields to persist/save Note-instance-State when activity is destroyed
+//    private String mOriginalNoteCourseId;
+//    private String mOriginalNoteTitle;
+//    private String mOriginalNoteText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -36,6 +48,19 @@ public class NoteActivity extends AppCompatActivity {
         setContentView(R.layout.activity_note);
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
+
+        //initialize viewModel => we use ViewModelProvider to manage ViewModel instances.
+        // Singleton Means Entire application has only one instance. e.g AndroidViewModelFactory.
+        ViewModelProvider viewModelProvider = new ViewModelProvider(getViewModelStore(),
+                ViewModelProvider.AndroidViewModelFactory.getInstance(getApplication()));
+        mViewModel = viewModelProvider.get(NoteActivityViewModel.class); //get viewModel instance.
+
+        // check if bundle is null. We only restore instance-state from bundle when ViewModel does not exist.
+        if (mViewModel.mIsNewlyCreated && savedInstanceState != null) {
+            // Restore the saved activity instance-state from bundle. ViewModel does not exist if isNewlyCreated = true.
+            mViewModel.restoreState(savedInstanceState);
+        }
+        mViewModel.mIsNewlyCreated = false;  // We have an existing ViewModel instance.
 
         //create a reference to a spinner declared in resource file.
         mSpinnerCourses = findViewById(R.id.spinner_courses);
@@ -60,6 +85,8 @@ public class NoteActivity extends AppCompatActivity {
         if (!mIsNewNote)
             displayNote(mSpinnerCourses, mTextNoteTitle, mTextNoteText);
 
+        Log.d(TAG, "onCreate-LifeCycle");
+
     }
 
     private void saveOriginalNoteValues() {
@@ -69,10 +96,12 @@ public class NoteActivity extends AppCompatActivity {
             return;
 
         //Save all original Note values. CourseId is unique to all courses.
-        //CourseId of the original Note.
-        mOriginalNoteCourseId = mNote.getCourse().getCourseId();
-        mOriginalNoteTitle = mNote.getTitle();
-        mOriginalNoteText = mNote.getText();
+        // Saving Activity instance state to ViewModel class.
+        // When activity is destroyed, instance state is lost. e.g instance fields loose their data.
+        //mOriginalNoteCourseId = mNote.getCourse().getCourseId();
+        mViewModel.mOriginalNoteCourseId = mNote.getCourse().getCourseId();
+        mViewModel.mOriginalNoteTitle = mNote.getTitle();
+        mViewModel.mOriginalNoteText = mNote.getText();
 
     }
 
@@ -91,37 +120,39 @@ public class NoteActivity extends AppCompatActivity {
 
     /**
      * Get the note user selected and was passed via intent-extras.
-     * Incase of a new-Note the intent-extras will be null.
+     * InCase of a new-Note the intent-extras will be null.
      */
     private void readDisplayStateValues() {
         Intent intent = getIntent();  // get the intent that started this Activity.
 
         //get reference to note user selected and was passed via intent-extras.
         //mNote = intent.getParcelableExtra(NOTE_INFO);
-        int position = intent.getIntExtra(NOTE_POSITION, POSITION_NOT_SET);
+        mNotePosition = intent.getIntExtra(NOTE_POSITION, POSITION_NOT_SET);
 
         //Incase of a new note we have not passed any intent-extras, therefore mNote = null.
         //Only true when mNote or Selected-Note is null.
         //mIsNewNote = mNote == null;
-        mIsNewNote = position == POSITION_NOT_SET;
+        mIsNewNote = mNotePosition == POSITION_NOT_SET;
 
         if (mIsNewNote) {
             //We are creating a new Note.
             //In Android we create the backing store of the new entry when creating the entry. Usually on Activity's onCreate() method.
             createNewNote();
-        } else {
-            //get note using specified index/position.
-            mNote = DataManager.getInstance().getNotes().get(position);
         }
-
+        //Log the note's position.
+        Log.i(TAG, "mNotePosition : " + mNotePosition);
+        //get note at the specified index/position.
+        mNote = DataManager.getInstance().getNotes().get(mNotePosition);
 
     }
 
     private void createNewNote() {
         DataManager dm = DataManager.getInstance(); //get dataManager instance.
-        //create a newNote and get its position.
+        //create a new Note and get its position/Index in the List.
         mNotePosition = dm.createNewNote();
-        mNote = dm.getNotes().get(mNotePosition);  //get Note at the specified index/position.
+
+        // This method is called by readDisplayStateValues we don't have to retrieve note in both methods.
+        //mNote = dm.getNotes().get(mNotePosition);  //get Note at the specified index/position.
 
     }
 
@@ -143,6 +174,11 @@ public class NoteActivity extends AppCompatActivity {
         if (id == R.id.action_send_mail) {
             sendEmail();
             return true;
+        } else if (id == R.id.action_next) {
+            moveNext();
+
+            return true;
+
         } else if (id == R.id.action_cancel) {
             // We no-longer wish to proceed with creating the new-Note. Don't save any changes.
             mIsCancelling = true;
@@ -154,10 +190,44 @@ public class NoteActivity extends AppCompatActivity {
     }
 
     @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+        MenuItem item = menu.findItem(R.id.action_next); // Reference to menu.
+        int lastNoteIndex = DataManager.getInstance().getNotes().size() - 1; //Arrays have zero-based indexes.
+        item.setEnabled(mNotePosition < lastNoteIndex); //true when lastNoteIndex is less than currentNotePosition.
+
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    // move to the next note.
+    private void moveNext() {
+        saveNote();  // before we move to next note save current note changes.
+
+        ++mNotePosition; // increment note position.
+        mNote = DataManager.getInstance().getNotes().get(mNotePosition);  //note at index position.
+
+        saveOriginalNoteValues(); //If we cancel, revert to original note values.
+        displayNote(mSpinnerCourses, mTextNoteTitle, mTextNoteText);
+
+        invalidateOptionsMenu();  //trigger system to call onPrepareOptionsMenu. Provides chance to change menu.
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+
+        //save the activity instance state to bundle.
+        if (outState != null) {
+            mViewModel.saveState(outState);
+        }
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
 
         if (mIsCancelling) {
+            // We are cancelling the note.
+            Log.i(TAG, "Cancelling note at position : " + mNotePosition);
             if (mIsNewNote) {
                 // we were creating a new Note but decided to delete it. Delete Note from backing store.
                 DataManager.getInstance().removeNote(mNotePosition);
@@ -170,14 +240,17 @@ public class NoteActivity extends AppCompatActivity {
             // Save changes made to Note to the backing store.
             saveNote();
         }
+
+        Log.d(TAG, "onPause-LifeCycle");
     }
 
     private void storePreviousNoteValues() {
-        //Restore the original note values. Discard any new changes made to Note.
-        CourseInfo course = DataManager.getInstance().getCourse(mOriginalNoteCourseId);
+        // Restore the original note values. Discard any new changes made to Note.
+        // We Restore original Note values from the ViewModel.
+        CourseInfo course = DataManager.getInstance().getCourse(mViewModel.mOriginalNoteCourseId);
         mNote.setCourse(course);
-        mNote.setTitle(mOriginalNoteTitle);
-        mNote.setText(mOriginalNoteText);
+        mNote.setTitle(mViewModel.mOriginalNoteTitle);
+        mNote.setText(mViewModel.mOriginalNoteText);
     }
 
     /**
